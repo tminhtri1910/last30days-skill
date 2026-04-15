@@ -330,7 +330,9 @@ def get_config() -> Dict[str, Any]:
       4. Browser cookies (only fills in missing keys)
     """
     # Load from global config file
+    # print("CONFIG_FILE:", CONFIG_FILE)
     file_env = load_env_file(CONFIG_FILE) if CONFIG_FILE else {}
+    # print("File env:", file_env)
 
     # Load from per-project config (overrides global)
     project_env_path = _find_project_env()

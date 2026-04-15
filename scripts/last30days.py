@@ -1540,6 +1540,7 @@ def main():
 
     # Load config
     config = env.get_config()
+    # print("Config:", config)
 
     # Detect first run (no SETUP_COMPLETE in config)
     first_run = setup_wizard.is_first_run(config)
@@ -1723,6 +1724,7 @@ def main():
 
     # Detect query type for source tiering and scoring adjustments
     query_type = qt.detect_query_type(args.topic)
+    print("Query type:", query_type)
 
     # Apply --search flag: restrict sources to the specified subset
     # Source defaults are query-type-aware (Truth Social always opt-in,
@@ -1737,7 +1739,10 @@ def main():
     search_run_xiaohongshu = has_xiaohongshu
 
     # INCLUDE_SOURCES override: force specific sources on regardless of tier
-    _include_sources = {s.strip().lower() for s in config.get('INCLUDE_SOURCES', '').split(',') if s.strip()}
+    _include_sources = ''
+    if config.get('INCLUDE_SOURCES', '') is not None:
+        _include_sources = {s.strip().lower() for s in config.get('INCLUDE_SOURCES', '').split(',') if s.strip()}
+    
     if _include_sources:
         if 'tiktok' in _include_sources and has_tiktok:
             if not search_run_tiktok:
@@ -1920,7 +1925,7 @@ def main():
     report.context_snippet_md = render.render_context_snippet(report)
 
     # Write outputs
-    render.write_outputs(report, raw_openai, raw_xai, raw_reddit_enriched)
+    render.write_outputs(args.topic, report, raw_openai, raw_xai, raw_reddit_enriched)
 
     # Show completion
     if sources == "web":

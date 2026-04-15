@@ -972,6 +972,7 @@ def render_full_report(report: schema.Report) -> str:
 
 
 def write_outputs(
+    topic: str,
     report: schema.Report,
     raw_openai: Optional[dict] = None,
     raw_xai: Optional[dict] = None,
@@ -986,31 +987,38 @@ def write_outputs(
         raw_reddit_enriched: Raw enriched Reddit thread data
     """
     ensure_output_dir()
+    global OUTPUT_DIR
+    OUTPUT_DIR = OUTPUT_DIR / topic.replace(" ", "_").replace("/", "_")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # report.json
-    with open(OUTPUT_DIR / "report.json", 'w') as f:
-        json.dump(report.to_dict(), f, indent=2)
+    with open(OUTPUT_DIR / "report.json", 'w', encoding="utf-8") as f:
+        json.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
 
     # report.md
-    with open(OUTPUT_DIR / "report.md", 'w') as f:
+    with open(OUTPUT_DIR / "report.md", 'w', encoding="utf-8") as f:
         f.write(render_full_report(report))
 
+    # report.compact.md (assistant-friendly condensed output)
+    with open(OUTPUT_DIR / "report.compact.md", 'w', encoding="utf-8") as f:
+        f.write(render_compact(report))
+
     # last30days.context.md
-    with open(OUTPUT_DIR / "last30days.context.md", 'w') as f:
+    with open(OUTPUT_DIR / "last30days.context.md", 'w', encoding="utf-8") as f:
         f.write(render_context_snippet(report))
 
     # Raw responses
     if raw_openai:
-        with open(OUTPUT_DIR / "raw_openai.json", 'w') as f:
-            json.dump(raw_openai, f, indent=2)
+        with open(OUTPUT_DIR / "raw_openai.json", 'w', encoding="utf-8") as f:
+            json.dump(raw_openai, f, ensure_ascii=False, indent=2)
 
     if raw_xai:
-        with open(OUTPUT_DIR / "raw_xai.json", 'w') as f:
-            json.dump(raw_xai, f, indent=2)
+        with open(OUTPUT_DIR / "raw_xai.json", 'w', encoding="utf-8") as f:
+            json.dump(raw_xai, f, ensure_ascii=False, indent=2)
 
     if raw_reddit_enriched:
-        with open(OUTPUT_DIR / "raw_reddit_threads_enriched.json", 'w') as f:
-            json.dump(raw_reddit_enriched, f, indent=2)
+        with open(OUTPUT_DIR / "raw_reddit_threads_enriched.json", 'w', encoding="utf-8") as f:
+            json.dump(raw_reddit_enriched, f, ensure_ascii=False, indent=2)
 
 
 def get_context_path() -> str:
