@@ -1,13 +1,19 @@
-"""TikTok search via ScrapeCreators API for /last30days.
+"""TikTok search utilities for /last30days.
 
-Uses ScrapeCreators REST API to search TikTok by keyword, extract engagement
-metrics (views, likes, comments, shares), and fetch video transcripts.
+Primary path uses ScrapeCreators REST API to search TikTok by keyword,
+extract engagement metrics (views, likes, comments, shares), and fetch
+video transcripts.
+
+This module also exposes a native TikTokApi-based search path that does not
+require ScrapeCreators.
 
 Requires SCRAPECREATORS_API_KEY in config. 100 free API calls, then PAYG.
 API docs: https://scrapecreators.com/docs
 """
 
+import asyncio
 import re
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -16,6 +22,11 @@ try:
     import requests as _requests
 except ImportError:
     _requests = None
+
+try:
+    from TikTokApi import TikTokApi as _TikTokApi
+except ImportError:
+    _TikTokApi = None
 
 from . import http
 
@@ -98,6 +109,144 @@ def _clean_webvtt(text: str) -> str:
             continue
         cleaned.append(line)
     return ' '.join(cleaned)
+
+
+def _get_ms_token(explicit: Optional[str] = None) -> Optional[str]:
+    """Resolve the TikTok ms_token used by the native TikTokApi flow."""
+    return (
+        explicit
+        or os.environ.get("ms_token")
+        or os.environ.get("MS_TOKEN")
+        or None
+    )
+
+
+def _normalize_native_video(video: Dict[str, Any], core_topic: str) -> Dict[str, Any]:
+    """Normalize a TikTokApi video payload to the shared internal format."""
+    video_id = str(video.get("id", ""))
+    text = video.get("desc", "")
+    author = video.get("author") or {}
+    author_name = author.get("uniqueId", "")
+    stats = video.get("stats") or {}
+    play_count = int(stats.get("playCount") or 0)
+    digg_count = int(stats.get("diggCount") or 0)
+    comment_count = int(stats.get("commentCount") or 0)
+    share_count = int(stats.get("shareCount") or 0)
+    text_extra = video.get("textExtra") or []
+    hashtag_names = [
+        t.get("hashtagName", "")
+        for t in text_extra
+        if isinstance(t, dict) and t.get("hashtagName")
+    ]
+    duration = (video.get("video") or {}).get("duration")
+    ts = video.get("createTime")
+    date_str = None
+    if ts:
+        try:
+            dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+            date_str = dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError, OSError):
+            pass
+
+    url = ""
+    if author_name and video_id:
+        url = f"https://www.tiktok.com/@{author_name}/video/{video_id}"
+
+    return {
+        "video_id": video_id,
+        "text": text,
+        "url": url,
+        "author_name": author_name,
+        "date": date_str,
+        "engagement": {
+            "views": play_count,
+            "likes": digg_count,
+            "comments": comment_count,
+            "shares": share_count,
+        },
+        "hashtags": hashtag_names,
+        "duration": duration,
+        "relevance": _compute_relevance(core_topic, text, hashtag_names),
+        "why_relevant": f"TikTok: {text[:60]}" if text else f"TikTok: {core_topic}",
+        "caption_snippet": text[:1000] if text else "",
+    }
+
+
+def _apply_date_filter(items: List[Dict[str, Any]], from_date: str, to_date: str) -> List[Dict[str, Any]]:
+    """Apply a hard date filter when the source provides dates."""
+    in_range = [i for i in items if i["date"] and from_date <= i["date"] <= to_date]
+    out_of_range = len(items) - len(in_range)
+    if in_range:
+        if out_of_range:
+            _log(f"Filtered {out_of_range} videos outside date range")
+        return in_range
+
+    _log(f"No videos within date range, keeping all {len(items)}")
+    return items
+
+
+async def _search_tiktok_native_async(
+    topic: str,
+    from_date: str,
+    to_date: str,
+    depth: str = "default",
+    ms_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Search TikTok using the TikTokApi package instead of ScrapeCreators."""
+    if _TikTokApi is None:
+        return {"items": [], "error": "TikTokApi package is not installed"}
+
+    token = _get_ms_token(ms_token)
+    if not token:
+        return {"items": [], "error": "No ms_token configured for native TikTokApi search"}
+
+    config = DEPTH_CONFIG.get(depth, DEPTH_CONFIG["default"])
+    core_topic = _extract_core_subject(topic)
+    _log(
+        f"Searching TikTok natively for '{core_topic}' "
+        f"(depth={depth}, count={config['results_per_page']})"
+    )
+
+    items: List[Dict[str, Any]] = []
+    try:
+        async with _TikTokApi() as api:
+            await api.create_sessions(
+                ms_tokens=[token],
+                num_sessions=1,
+                sleep_after=3,
+            )
+
+            async for video in api.search.search_type(
+                core_topic, "item", count=config["results_per_page"]
+            ):
+                items.append(_normalize_native_video(video.as_dict, core_topic))
+    except Exception as e:
+        _log(f"Native TikTokApi search failed: {e}")
+        return {"items": [], "error": f"{type(e).__name__}: {e}"}
+
+    items = _apply_date_filter(items, from_date, to_date)
+    items.sort(key=lambda x: x["engagement"]["views"], reverse=True)
+    _log(f"Found {len(items)} TikTok videos")
+    return {"items": items}
+
+
+def search_tiktok_native(
+    topic: str,
+    from_date: str,
+    to_date: str,
+    depth: str = "default",
+    ms_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Synchronous wrapper for the native TikTokApi keyword search."""
+    return asyncio.run(
+        _search_tiktok_native_async(
+            topic=topic,
+            from_date=from_date,
+            to_date=to_date,
+            depth=depth,
+            ms_token=ms_token,
+        )
+    )
 
 
 def search_tiktok(
@@ -308,7 +457,10 @@ def search_and_enrich(
     depth: str = "default",
     token: str = None,
 ) -> Dict[str, Any]:
-    """Full TikTok search: find videos, then fetch captions for top results.
+    """Full TikTok search.
+
+    Prefers the native TikTokApi keyword search. Falls back to ScrapeCreators
+    when the native path is unavailable or fails.
 
     Args:
         topic: Search topic
@@ -321,10 +473,26 @@ def search_and_enrich(
         Dict with 'items' list. Each item has a 'caption_snippet' field.
     """
     # Step 1: Search
-    search_result = search_tiktok(topic, from_date, to_date, depth, token)
+    native_result = search_tiktok_native(topic, from_date, to_date, depth, token)
+    native_items = native_result.get("items", [])
+
+    # Native search won. It already returns captions and normalized results.
+    if native_items and not native_result.get("error"):
+        return native_result
+
+    # Fall back to ScrapeCreators if native search was unavailable or empty.
+    search_result = search_tiktok(topic, from_date, to_date, depth, token) if token else native_result
+
     items = search_result.get("items", [])
 
     if not items:
+        if native_result.get("error") and not token:
+            return native_result
+        return search_result
+
+    # Native path already returns caption text in caption_snippet, so there is
+    # nothing extra to enrich.
+    if not token:
         return search_result
 
     # Step 2: Fetch captions for top N

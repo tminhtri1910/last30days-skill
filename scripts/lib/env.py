@@ -377,6 +377,7 @@ def get_config() -> Dict[str, Any]:
         ('FROM_BROWSER', None),
         ('SETUP_COMPLETE', None),
         ('INCLUDE_SOURCES', None),
+        ('ms_token', None),
     ]
 
     for key, default in keys:
@@ -694,12 +695,12 @@ def is_tiktok_available(config: Dict[str, Any]) -> bool:
 
     Returns True if SCRAPECREATORS_API_KEY or APIFY_API_TOKEN is set.
     """
-    return bool(config.get('SCRAPECREATORS_API_KEY') or config.get('APIFY_API_TOKEN'))
+    return bool(config.get('SCRAPECREATORS_API_KEY') or config.get('APIFY_API_TOKEN') or config.get('ms_token'))
 
 
 def get_tiktok_token(config: Dict[str, Any]) -> str:
     """Get TikTok API token, preferring ScrapeCreators over legacy Apify."""
-    return config.get('SCRAPECREATORS_API_KEY') or config.get('APIFY_API_TOKEN') or ''
+    return config.get('SCRAPECREATORS_API_KEY') or config.get('APIFY_API_TOKEN') or config.get('ms_token') or ''
 
 
 def is_instagram_available(config: Dict[str, Any]) -> bool:
