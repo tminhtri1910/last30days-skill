@@ -64,6 +64,19 @@ def request(
         data = json.dumps(json_data).encode('utf-8')
         headers.setdefault("Content-Type", "application/json")
 
+    import urllib.parse
+    try:
+        url.encode('ascii')
+    except UnicodeEncodeError:
+        parsed = urllib.parse.urlsplit(url)
+        url = urllib.parse.urlunsplit((
+            parsed.scheme,
+            parsed.netloc,
+            urllib.parse.quote(urllib.parse.unquote(parsed.path), safe='/'),
+            urllib.parse.quote(urllib.parse.unquote(parsed.query), safe='=&'),
+            urllib.parse.quote(urllib.parse.unquote(parsed.fragment))
+        ))
+
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
     log(f"{method} {url}")
