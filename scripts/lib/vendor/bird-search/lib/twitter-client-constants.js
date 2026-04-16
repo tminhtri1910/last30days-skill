@@ -1,5 +1,9 @@
-// biome-ignore lint/correctness/useImportExtensions: JSON module import doesn't use .js extension.
-import queryIds from './query-ids.json' with { type: 'json' };
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const queryIds = JSON.parse(fs.readFileSync(path.join(__dirname, 'query-ids.json'), 'utf-8'));
 export const TWITTER_API_BASE = 'https://x.com/i/api/graphql';
 export const TWITTER_GRAPHQL_POST_URL = 'https://x.com/i/api/graphql';
 export const TWITTER_UPLOAD_URL = 'https://upload.twitter.com/i/media/upload.json';

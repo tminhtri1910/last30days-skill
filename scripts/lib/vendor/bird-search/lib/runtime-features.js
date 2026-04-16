@@ -2,8 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-// biome-ignore lint/correctness/useImportExtensions: JSON module import doesn't use .js extension.
-import defaultOverrides from './features.json' with { type: 'json' };
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const defaultOverrides = JSON.parse(readFileSync(path.join(__dirname, 'features.json'), 'utf-8'));
 const DEFAULT_CACHE_FILENAME = 'features.json';
 let cachedOverrides = null;
 function normalizeFeatureMap(value) {

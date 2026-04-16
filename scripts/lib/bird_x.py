@@ -99,6 +99,8 @@ def is_bird_authenticated() -> Optional[str]:
             ["node", str(_BIRD_SEARCH_MJS), "--whoami"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             env=_subprocess_env(),
         )
@@ -175,6 +177,8 @@ def _run_bird_search(query: str, count: int, timeout: int) -> Dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             preexec_fn=preexec,
             env=_subprocess_env(),
         )
@@ -332,6 +336,8 @@ def search_handles(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 preexec_fn=preexec,
                 env=_subprocess_env(),
             )
