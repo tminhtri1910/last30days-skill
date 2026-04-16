@@ -93,8 +93,21 @@ def _log(msg: str):
 
 
 def is_ytdlp_installed() -> bool:
-    """Check if yt-dlp is available in PATH."""
-    return shutil.which("yt-dlp") is not None
+    """Check if yt-dlp is available in PATH or as a Python module."""
+    if shutil.which("yt-dlp") is not None:
+        return True
+    try:
+        import yt_dlp
+        return True
+    except ImportError:
+        return False
+
+def _get_ytdlp_cmd() -> list[str]:
+    """Get the correct base command for yt-dlp based on availability."""
+    if shutil.which("yt-dlp") is not None:
+        return ["yt-dlp"]
+    import sys
+    return [sys.executable, "-m", "yt_dlp"]
 
 
 def _extract_core_subject(topic: str) -> str:
@@ -146,8 +159,7 @@ def search_youtube(
     # NOTE: --dateafter intentionally omitted — YouTube search returns
     # relevance-sorted results and strict date filtering returns 0 for
     # evergreen topics. Python soft filter (below) handles date filtering.
-    cmd = [
-        "yt-dlp",
+    cmd = _get_ytdlp_cmd() + [
         "--ignore-config",
         "--no-cookies-from-browser",
         f"ytsearch{count}:{core_topic}",
@@ -366,8 +378,7 @@ def _fetch_transcript_ytdlp(video_id: str, temp_dir: str) -> Optional[str]:
     Returns:
         Raw VTT text, or None if no captions available.
     """
-    cmd = [
-        "yt-dlp",
+    cmd = _get_ytdlp_cmd() + [
         "--ignore-config",
         "--no-cookies-from-browser",
         "--write-auto-subs",
