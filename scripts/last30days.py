@@ -1703,6 +1703,7 @@ def main():
         )
     else:
         selected_models = models.get_models(config)
+        # print("selected_models:", selected_models)
 
     # Determine mode string
     if sources == "all":
@@ -1966,6 +1967,18 @@ def main():
 
     # Output result
     output_result(report, args.emit, web_needed, args.topic, from_date, to_date, missing_keys, args.days, source_info, first_run=first_run, quality=quality)
+
+    try:
+        import synthesize_report
+        input_path = render.OUTPUT_DIR
+        # input_path.mkdir(parents=True, exist_ok=True)
+
+        output_path = input_path / "synthesized-report.md"
+        sys.stderr.write("[Synthesize] Generating markdown report (this may take a minute)...\n")
+        written = synthesize_report.synthesize_markdown(input_path / "report.compact.md", output_path, "gpt-5-nano")
+        sys.stderr.write(f"[Synthesize] Saved synthesized report to: {written}\n")
+    except Exception as e:
+        sys.stderr.write(f"[Synthesize] Error: {e}\n")
 
     # Auto-save raw research to file if --save-dir is set
     if args.save_dir:
