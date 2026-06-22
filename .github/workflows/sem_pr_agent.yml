@@ -1,0 +1,226 @@
+# Name of the GitHub Action workflow
+name: PR Impact Analysis (sem + pr-agent)
+
+# Trigger the workflow on pull requests targeting the 'main' branch
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  impact-analysis:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    # Run the job on the latest Ubuntu runner
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout the repository code
+      - uses: actions/checkout@v4
+        with:
+          # Fetch all history for all tags and branches (needed for accurate diffing)
+          fetch-depth: 0
+
+      # Step 2: Download and install the 'sem' CLI tool from Ataraxy-Labs
+      - name: Install sem
+        run: |
+          curl -L https://github.com/Ataraxy-Labs/sem/releases/latest/download/sem-linux-x86_64.tar.gz -o sem.tar.gz  
+          tar -xzf sem.tar.gz  
+          chmod +x sem  
+          # Move the executable to a directory in the system's PATH
+          sudo mv sem /usr/local/bin/
+
+      # Step 3: Run 'sem diff' to compute a semantic diff between the target branch and the PR
+      - name: Get semantic diff
+        id: diff
+        run: |
+          # Compare origin/main with the current HEAD and output results to diff.json
+          sem diff --from origin/${{ github.base_ref }} --to HEAD --format json | jq '.' > diff.json
+
+          # Expose the JSON output as a step output variable for potential downstream use
+          echo "diff_output<<EOF" >> $GITHUB_OUTPUT
+          cat diff.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Step 4: Extract dependents data (JSON)
+      - name: Extract dependents data
+        id: dependents
+        env: 
+          DIFF_OUTPUT: ${{ steps.diff.outputs.diff_output }}
+        run: |
+          echo "[" > data.json
+          first=true
+          
+          while read -r change; do  
+            entity_name=$(echo "$change" | jq -r '.entityName')  
+            file_path=$(echo "$change" | jq -r '.filePath')  
+              
+            if sem context "$entity_name" --file "$file_path" --json > context.json; then  
+              direct_deps=$(jq '[.entries[] | select(.role == "direct_dependent")]' context.json)
+
+              # Kiểm tra nếu direct_deps không rỗng trước khi loop  
+              if [ -n "$direct_deps" ] && [ "$direct_deps" != "[]" ]; then 
+                # Xử lý từng direct_dependent 
+                while read -r direct_dep; do  
+                  dep_name=$(echo "$direct_dep" | jq -r '.name')  
+                  dep_file=$(echo "$direct_dep" | jq -r '.file') 
+
+                  if sem context "$dep_name" --file "$dep_file" --json > transitive_context.json; then  
+                    # Lọc transitive_dependents và thêm trường parent  
+                    transitive_deps=$(jq '[.entries[] | select(.role == "direct_dependent") | . + {"parent": "'"$dep_name"'"}]' transitive_context.json)
+
+                    if [ -n "$transitive_deps" ] && [ "$transitive_deps" != "[]" ]; then  
+                      if [ "$first" = true ]; then  
+                        first=false  
+                      else  
+                        echo "," >> data.json  
+                      fi  
+                      jq -n --arg name "$entity_name" --arg path "$file_path" --argjson direct "$direct_deps" --argjson transitive "$transitive_deps" '{entityName: $name, filePath: $path, direct_dependents: $direct, transitive_dependents: $transitive}' >> data.json
+                    fi
+                  fi
+                done < <(echo "$direct_deps" | jq -c '.[]')
+              fi
+
+            else  
+              echo "Failed to get context for $entity_name in $file_path" >&2  
+              cat context.json >&2  
+            fi
+
+          done < <(jq -c '.changes[]' diff.json)
+          
+          echo "]" >> data.json
+
+          # Expose the JSON data as a step output variable
+          echo "dependents_data<<EOF" >> $GITHUB_OUTPUT
+          cat data.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: PR Agent action step
+        id: pragent
+        uses: tminhtri1910/pr-agent@main
+        env:
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Map the output from the previous step to an environment variable
+          DEPENDENTS_DATA_JSON: ${{ steps.dependents.outputs.dependents_data }}
+              
+      # Step 5: Post the generated impact report as a comment on the pull request
+      - name: Comment PR with impact report
+        uses: actions/github-script@v7
+        env:
+          IMPACT_REPORT: ${{ steps.dependents.outputs.dependents_data }}
+        with:
+          script: |
+            const data = JSON.parse(process.env.IMPACT_REPORT);  
+            let comment = "# Dependents with Code Content (sem)\n\n";  
+            
+            data.forEach(entity => {
+              comment += `## ${entity.entityName} (${entity.filePath})\n\n`;
+              entity.direct_dependents.forEach(dep => {
+                comment += `### ${dep.name} (${dep.type})\n`;
+                comment += `File: ${dep.file}\n`;
+                comment += `Role: ${dep.role}\n`;
+                comment += '```\n';
+                comment += `${dep.content}\n`;
+                comment += '```\n\n';
+              });
+
+              entity.transitive_dependents.forEach(dep => {
+                comment += `### ${dep.name} (${dep.type})\n`;
+                comment += `File: ${dep.file}\n`;
+                comment += `Role: transitive_dependent\n`;
+                comment += `Parent: ${dep.parent}\n`;
+                comment += '```\n';
+                comment += `${dep.content}\n`;
+                comment += '```\n\n';
+              });
+            });
+
+            // Use the GitHub REST API to create a comment on the current PR
+            github.rest.issues.createComment({  
+              issue_number: context.issue.number,  
+              owner: context.repo.owner,  
+              repo: context.repo.repo,  
+              body: comment
+            })
+
+      # - name: Extract dependents with code content
+      #   run: |
+      #     python3 << 'EOF'
+      #     import json
+      #     import subprocess
+
+      #     # Get diff
+      #     diff = json.loads(subprocess.check_output(['sem', 'diff', '--from', 'origin/${{ github.base_ref }}', '--to', 'HEAD', '--format', 'json']))
+
+      #     all_dependents_with_code = []
+
+      #     for change in diff['changes']:
+      #         entity_name = change['entityName']
+      #         file_path = change['filePath']
+
+      #         # Get context with full code content
+      #         context = json.loads(subprocess.check_output(['sem', 'context', f'"{entity_name}"', '--file', f'"{file_path}"', '--json']))
+
+      #         # Filter dependents only (exclude target)
+      #         dependents = [e for e in context['entries'] if e['role'] in ['direct_dependent', 'transitive_dependent']]
+
+      #         for dep in dependents:
+      #             all_dependents_with_code.append({
+      #                 'changed_entity': entity_name,
+      #                 'dependent': dep['name'],
+      #                 'type': dep['type'],
+      #                 'file': dep['file'],
+      #                 'role': dep['role'],
+      #                 'code': dep['content']  # Full code content
+      #             })
+
+      #     # Output
+      #     with open('dependents_with_code.json', 'w') as f:
+      #         json.dump(all_dependents_with_code, f, indent=2)
+
+      #     print(f"Found {len(all_dependents_with_code)} dependents with code")
+      #     EOF
+
+      # - name: Extract dependents for changed entities
+      #   id: dependents
+      #   run: |
+      #     echo "# Dependents Analysis" > dependents_report.md
+
+      #     # Extract entity names from diff
+      #     for entity in $(jq -r '.changes[].entityName' diff.json); do
+      #       echo "## Dependents for: $entity" >> dependents_report.md
+
+      #       # Get context and filter by role
+      #       sem context "$entity" --json 2>/dev/null | \
+      #         jq -r '.context[] | select(.role == "direct_dependent" or .role == "transitive_dependent") |
+      #                "- \(.entity) (\(.type)) in \(.file)"' >> dependents_report.md 2>&1 || true
+      #       echo "" >> dependents_report.md
+      #     done
+
+      #     # Expose the JSON report as a step output variable
+      #     echo "dependents_report<<EOF" >> $GITHUB_OUTPUT
+      #     cat dependents_report.json >> $GITHUB_OUTPUT
+      #     echo "EOF" >> $GITHUB_OUTPUT
+
+      # # # Step 4: Parse the diff, run impact analysis on each changed entity, and generate a Markdown report
+      # # - name: Extract impact for changed entities
+      # #   id: impact
+      # #   run: |
+      # #     # Initialize the impact report Markdown file
+      # #     echo "# Impact Analysis for PR" > impact_report.md
+
+      # #     # Loop through each changed entity identified in the diff
+      # #     for entity in $(jq -r '.changes[].entityName' diff.json); do
+      # #       echo "## Impact for $entity" >> impact_report.md
+      # #       # Run 'sem impact' for the entity; saving the results to impact.json (ignores errors)
+      # #       sem impact "$entity" --json > impact.json 2>&1 || true
+      # #       # Extract impacted entities from impact.json and append them as list items to the report
+      # #       jq -r '.impact.entities[]? | "- \(.name) (\(.filePath))"' impact.json >> impact_report.md 2>&1 || true
+      # #     done
+
+      # #     # Expose the Markdown report content as a step output variable
+      # #     echo "impact_report<<EOF" >> $GITHUB_OUTPUT
+      # #     cat impact_report.md >> $GITHUB_OUTPUT
+      # #     echo "EOF" >> $GITHUB_OUTPUT
