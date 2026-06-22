@@ -1,6 +1,5 @@
-# ClawHub/Hermes packaging exclusions for repository-root scans.
-# Mirrors .skillignore so non-runtime docs/dev artifacts stay out of the
-# public bundle and install-time skill security scan.
+# Hermes install-time scanner/package exclusions for repository-root scans.
+# Keep the public bundle focused on the runtime skill under skills/last30days/.
 
 # VCS, local envs, caches, and generated outputs
 .git/
